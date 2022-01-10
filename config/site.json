@@ -13,7 +13,7 @@
   "protectedRoutes": [
     "/🌞 Private folder/u-need-a-password",
     "/🥟 Some test files/Protected route",
-    "/Upload"
+    "/"
   ],
   "email": "mailto:spencer.wushangbo@gmail.com",
   "links": [
