@@ -2,7 +2,7 @@
   "userPrincipalName": "pri@nizhen.se",
   "icon": "/icons/128.png",
   "title": "王哈哈的叉叉",
-  "baseDirectory": "/Video",
+  "baseDirectory": "/Upload",
   "maxItems": 100,
   "googleFontSans": "Inter",
   "googleFontMono": "Fira Mono",
