@@ -12,8 +12,14 @@ import { getOdAuthTokens, storeOdAuthTokens } from '../../utils/odAuthTokenStore
 const basePath = pathPosix.resolve('/', siteConfig.baseDirectory)
 const clientSecret = revealObfuscatedToken(apiConfig.obfuscatedClientSecret)
 
-const encodePath = (path: string) => {
-  let encodedPath = pathPosix.join(basePath, pathPosix.resolve('/', path))
+/**
+ * Encode the path of the file relative to the base directory
+ *
+ * @param path Relative path of the file to the base directory
+ * @returns Absolute path of the file inside OneDrive
+ */
+export function encodePath(path: string): string {
+  let encodedPath = pathPosix.join(basePath, path)
   if (encodedPath === '/' || encodedPath === '') {
     return ''
   }
@@ -21,7 +27,12 @@ const encodePath = (path: string) => {
   return `:${encodeURIComponent(encodedPath)}`
 }
 
-async function getAccessToken(): Promise<any> {
+/**
+ * Fetch the access token from Redis storage and check if the token requires a renew
+ *
+ * @returns Access token for OneDrive API
+ */
+export async function getAccessToken(): Promise<string> {
   const { accessToken, refreshToken } = await getOdAuthTokens()
 
   // Return in storage access token if it is still valid
@@ -98,6 +109,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     res.status(400).json({ error: 'Path query invalid.' })
     return
   }
+  const cleanPath = pathPosix.resolve('/', pathPosix.normalize(path))
 
   const accessToken = await getAccessToken()
 
@@ -111,7 +123,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   const protectedRoutes = siteConfig.protectedRoutes
   let authTokenPath = ''
   for (const r of protectedRoutes) {
-    if (path.startsWith(r)) {
+    if (cleanPath.startsWith(r)) {
       authTokenPath = `${r}/.password`
       break
     }
@@ -150,7 +162,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
   }
 
-  const requestPath = encodePath(path)
+  const requestPath = encodePath(cleanPath)
   // Handle response from OneDrive API
   const requestUrl = `${apiConfig.driveApi}/root${requestPath}`
   // Whether path is root, which requires some special treatment
@@ -178,39 +190,46 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   // Querying current path identity (file or folder) and follow up query childrens in folder
   // console.log(accessToken)
 
-  const { data: identityData } = await axios.get(requestUrl, {
-    headers: { Authorization: `Bearer ${accessToken}` },
-    params: {
-      select: '@microsoft.graph.downloadUrl,name,size,id,lastModifiedDateTime,folder,file',
-    },
-  })
-
-  if ('folder' in identityData) {
-    const { data: folderData } = await axios.get(`${requestUrl}${isRoot ? '' : ':'}/children`, {
+  try {
+    const { data: identityData } = await axios.get(requestUrl, {
       headers: { Authorization: `Bearer ${accessToken}` },
-      params: next
-        ? {
-            select: '@microsoft.graph.downloadUrl,name,size,id,lastModifiedDateTime,folder,file',
-            top: siteConfig.maxItems,
-            $skipToken: next,
-          }
-        : {
-            select: '@microsoft.graph.downloadUrl,name,size,id,lastModifiedDateTime,folder,file',
-            top: siteConfig.maxItems,
-          },
+      params: {
+        select: '@microsoft.graph.downloadUrl,name,size,id,lastModifiedDateTime,folder,file,video',
+      },
     })
 
-    // Extract next page token from full @odata.nextLink
-    const nextPage = folderData['@odata.nextLink'] ? folderData['@odata.nextLink'].match(/&\$skiptoken=(.+)/i)[1] : null
+    if ('folder' in identityData) {
+      const { data: folderData } = await axios.get(`${requestUrl}${isRoot ? '' : ':'}/children`, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+        params: next
+          ? {
+              select: '@microsoft.graph.downloadUrl,name,size,id,lastModifiedDateTime,folder,file,video',
+              top: siteConfig.maxItems,
+              $skipToken: next,
+            }
+          : {
+              select: '@microsoft.graph.downloadUrl,name,size,id,lastModifiedDateTime,folder,file,video',
+              top: siteConfig.maxItems,
+            },
+      })
 
-    // Return paging token if specified
-    if (nextPage) {
-      res.status(200).json({ folder: folderData, next: nextPage })
-    } else {
-      res.status(200).json({ folder: folderData })
+      // Extract next page token from full @odata.nextLink
+      const nextPage = folderData['@odata.nextLink']
+        ? folderData['@odata.nextLink'].match(/&\$skiptoken=(.+)/i)[1]
+        : null
+
+      // Return paging token if specified
+      if (nextPage) {
+        res.status(200).json({ folder: folderData, next: nextPage })
+      } else {
+        res.status(200).json({ folder: folderData })
+      }
+      return
     }
+    res.status(200).json({ file: identityData })
+    return
+  } catch (error: any) {
+    res.status(error.response.status).json({ error: error.response.data })
     return
   }
-  res.status(200).json({ file: identityData })
-  return
 }
